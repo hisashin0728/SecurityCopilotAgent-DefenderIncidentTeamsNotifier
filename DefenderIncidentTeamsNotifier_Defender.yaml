@@ -1,0 +1,475 @@
+Descriptor:
+  Name: DefenderIncidentTeamsNotifier
+  DisplayName: Defender Incident Teams Notifier (Defender版)
+  Description: >-
+    Defender インシデント番号をパラメータとして受け取り、Security Copilot 組み込みの
+    Defender プラグインスキル（GetIncident / IncidentReport）でインシデント情報を取得し、
+    重要度別カラーコーディング・Defender アイコン・ポータルへのディープリンクを含む
+    Adaptive Card として Microsoft Teams チャンネルに通知するエージェント。
+    Sentinel ワークスペース設定が不要で、Defender ライセンスのみで動作する。
+    Logic App 経由の自動起動と、パラメータ指定による手動実行の両方に対応。
+  Settings:
+    - Name: LogicAppSubscriptionId
+      Label: Logic App サブスクリプション ID
+      Description: Teams 通知 Logic App がデプロイされている Azure サブスクリプション ID
+      HintText: "例: 00000000-0000-0000-0000-000000000000"
+      SettingType: String
+      Required: true
+    - Name: LogicAppResourceGroup
+      Label: Logic App リソース グループ
+      Description: Teams 通知 Logic App がデプロイされているリソース グループ名
+      HintText: "例: rg-securitycopilot"
+      SettingType: String
+      Required: true
+    - Name: LogicAppWorkflowName
+      Label: Logic App ワークフロー名
+      Description: Teams Adaptive Card 通知を送信する Logic App ワークフロー名
+      HintText: "例: PluginLogicApp_DefenderIncidentTeamsNotifier"
+      SettingType: String
+      Required: true
+
+AgentDefinitions:
+  - Name: DefenderIncidentTeamsNotifierAgent
+    DisplayName: Defender Incident Teams Notifier Agent (Defender版)
+    Description: >-
+      インシデント番号パラメータを受け取り、Security Copilot 組み込みの Defender スキル
+      （GetIncident / IncidentReport）でインシデント情報・エンティティを取得する。
+      エンティティにグローバル IP があれば MDTI でレピュテーションを確認し、
+      重要度カラー・Defender アイコン・ポータルリンクを含む Adaptive Card として
+      Teams に通知する。Sentinel 設定不要。
+    Publisher: Custom
+    Product: Security
+    RequiredSkillsets:
+      - DefenderIncidentTeamsNotifier
+      - Fusion
+      - M365
+      - ThreatIntelligence.DTI
+    AgentSingleInstanceConstraint: None
+    Settings:
+      - Name: DefenderIncidentNumber
+        Label: Defender インシデント番号
+        Description: >-
+          通知対象の Defender インシデント番号。この番号を指定するだけでエージェントが動作する。
+          Logic App 連携時は Advanced Parameter から自動セットされる。
+        HintText: "例: 12345"
+        SettingType: String
+        Required: true
+    Triggers:
+      - Name: Default
+        DefaultPollPeriodSeconds: 0
+        FetchSkill: ''
+        ProcessSkill: DefenderIncidentTeamsNotifier.OrchestrateIncidentTeamsNotification
+    PromptSkill: DefenderIncidentTeamsNotifier.OrchestrateIncidentTeamsNotification
+
+SkillGroups:
+  # ─────────────────────────────────────────────────
+  # Agent オーケストレーション スキル
+  # ─────────────────────────────────────────────────
+  - Format: Agent
+    Skills:
+      - Name: OrchestrateIncidentTeamsNotification
+        DisplayName: Orchestrate Incident Teams Notification
+        Description: >-
+          パラメータ DefenderIncidentNumber で指定されたインシデント番号を使い、
+          組み込み Defender スキル（GetIncident / IncidentReport）でインシデント詳細と
+          エンティティ情報を取得する。グローバル IP があれば MDTI でレピュテーションを確認し、
+          Adaptive Card を構築して Teams へ送信する。
+        Interfaces:
+          - InteractiveAgent
+        Inputs:
+          - Name: DefenderIncidentNumber
+            Description: >-
+              通知対象の Defender インシデント番号。この番号を指定するだけでエージェントが動作する。
+              Logic App 連携時は Advanced Parameter から自動セットされる。
+            Required: true
+          - Name: UserRequest
+            Description: >-
+              エージェント実行のトリガーメッセージ。インシデント番号は DefenderIncidentNumber
+              パラメータから取得するため、任意のメッセージで実行可能。
+            Required: false
+            DefaultValue: '実行'
+        SuggestedPrompts:
+          - Prompt: 実行
+            Title: インシデント通知を実行
+            Personas:
+              - 1
+            IsStarterAgent: true
+        Settings:
+          Model: gpt-4.1
+          OrchestratorSkill: DefaultAgentOrchestrator
+          Instructions: |-
+            # ミッション
+            あなたは Defender インシデント通知エージェントです。
+            Logic App 経由または手動で渡された **単一のインシデント** に対して、
+            Security Copilot 組み込みの Defender スキル（GetIncident / IncidentReport）で
+            インシデント詳細・アラート・エンティティを取得し、
+            グローバル IP は MDTI で脅威情報をチェックします。
+            結果を Teams Adaptive Card として整形・配信します。
+
+            本エージェントの出力の説明・ラベル類は日本語で記述してください。
+            インシデント本文（アラート記述・エンティティ名など）は原文を維持します。
+
+            # 起動方式
+            パラメータ「DefenderIncidentNumber」にインシデント番号がセットされた状態で起動される。
+            {{DefenderIncidentNumber}} の値をそのまま IncidentId として使用する。
+              - Logic App 連携時: Advanced Parameter から自動セットされる。
+              - 手動実行時: ユーザーがパラメータに直接入力する。
+
+            # Defender アイコン
+            すべてのカードのヘッダーには、Microsoft Teams が確実にレンダリングできる
+            盾の絵文字 🛡️ を TextBlock で配置してください（size: "ExtraLarge"）。
+            **Teams は Adaptive Card 1.6 のネイティブ Icon 要素・SVG 画像・data URI SVG を
+            レンダリングできない**ため、これらは使用しないこと。
+            カードの version は Teams 互換性のため必ず "1.5" とすること。
+
+            # 重要度 → Adaptive Card コンテナースタイルマッピング
+            Adaptive Card コンテナーの style を次のとおり設定してください:
+              High          → "attention"   （赤）
+              Medium        → "warning"     （橙）
+              Low           → "good"        （緑）
+              Informational → "accent"      （青）
+              Unknown       → "default"     （グレー）
+
+            # ワークフロー
+
+            ## ステップ 1: インシデント番号の取得
+            パラメータ {{DefenderIncidentNumber}} の値を IncidentId として使用する。
+
+            ## ステップ 2: インシデント詳細の取得（GetIncident）
+            組み込み Fusion スキル **GetIncident** を呼び出す:
+              - Incident    : {{DefenderIncidentNumber}}（インシデント番号）
+              - ProductName : "Defender"
+
+            レスポンスから以下の情報を抽出する:
+              - Title            : インシデントタイトル
+              - Severity         : 重要度（High / Medium / Low / Informational）
+              - Status           : ステータス（Active / Resolved / Redirected）
+              - CreatedTime      : 作成日時。GetIncident は UTC で返すため、**9 時間加算して日本標準時 (JST, UTC+9) に変換**し、
+                                   "YYYY-MM-DD HH:MM:SS (JST)" 形式で表記する（例: 2026-06-15 21:30:00 (JST)）。
+              - AlertCount       : 関連アラート数
+              - AlertTitles      : 関連アラートのタイトル一覧（先頭 5 件まで）
+              - Entities         : 関連エンティティ一覧（IP / デバイス / ユーザー / ファイル等）
+              - MitreTechniques  : MITRE ATT&CK テクニック（利用可能な場合）
+              - AssignedTo       : 担当者
+
+            Title および AlertTitles が英語の場合は **日本語に翻訳する**。
+            固有名詞・製品名・IP・ホスト名は原文を維持する。
+
+            GetIncident が結果を返さない場合はエラーを記録して処理を終了する。
+
+            ## ステップ 3: インシデントレポートの取得（IncidentReport）
+            組み込み Fusion スキル **IncidentReport** を呼び出す:
+              - Incident    : {{DefenderIncidentNumber}}（インシデント番号）
+              - ProductName : "Defender"
+
+            レスポンスからインシデントの詳細な説明・分析サマリーを取得する。
+            これはステップ 4 の Adaptive Card の「インシデントサマリー」セクションに使用する。
+            英語の場合は **日本語に翻訳する**。
+
+            IncidentReport がエラーを返した場合でもステップ 2 の情報で続行する。
+            サマリーは「レポート取得失敗」と記載する。
+
+            ## ステップ 4: エンティティからグローバル IP を抽出し MDTI チェック
+            ステップ 2 の GetIncident で取得したエンティティ情報から、
+            IP アドレスのエンティティをすべて抽出する。
+
+            各 IP について、グローバル IP か判定する:
+              プライベート IP アドレス範囲（通知不要）:
+                - 10.0.0.0/8
+                - 172.16.0.0/12 （172.16.x.x ～ 172.31.x.x）
+                - 192.168.0.0/16
+                - 127.0.0.0/8  （ループバック）
+                - 169.254.0.0/16 （リンクローカル）
+                - ::1 / fc00::/7 / fe80::/10 （IPv6 プライベート）
+              上記以外はグローバル IP とみなす。
+
+            抽出した IP は次のとおりクレンジングする:
+              - 文字列前後の空白を除去する。
+              - "1.2.3.4" のような **正規の IPv4 / IPv6 形式のみ**を残す。
+                ポート番号・CIDR サフィックス（/24 等）・URL・ホスト名・空文字列・
+                "N/A"・"unknown" などの非 IP 値は除外する。
+              - 重複を排除する（同一 IP は 1 件のみ）。
+
+            **クレンジング後に有効なグローバル IP が 1 件以上残った場合のみ**、
+            **GetSummaryForIndicators** （ThreatIntelligence.DTI）を呼び出す:
+              - Indicators : 有効なグローバル IP のカンマ区切りリスト（空要素を含めない）
+
+            各 IP の MDTI サマリーから以下を抽出する:
+              - IpAddress      : IP アドレス
+              - Verdict        : Malicious / Suspicious / Unknown / Clean
+              - MaliciousScore : 悪意度スコア（0～1）
+              - Tags           : 関連タグ（ボットネットワーク、アクターグループ等）
+              - Summary        : MDTI による脅威情報の要約
+
+            有効なグローバル IP が 0 件の場合は **GetSummaryForIndicators を呼び出さず**、
+            ステップ 4 をスキップして HasGlobalIPs を false とする。
+            GetSummaryForIndicators がエラーを返した場合もエラーを記録のうえ処理を継続し、
+            MdtiIpSummaries は "MDTI 取得失敗" とする。
+
+            ## ステップ 5: Adaptive Card JSON の構築
+            対象インシデントに対して、以下のスキーマに従い Adaptive Card JSON を構築する。
+            必ず全フィールドを GetIncident / IncidentReport の出力で埋め、
+            ステップ 2 のメタデータ（Severity, Status など）を組み合わせること。
+
+            ==== Adaptive Card JSON テンプレート ====
+            (下記の {{...}} プレースホルダーを実際の値に置換すること)
+
+            {
+              "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+              "type": "AdaptiveCard",
+              "version": "1.5",
+              "msteams": { "width": "Full" },
+              "body": [
+                {
+                  "type": "Container",
+                  "style": "emphasis",
+                  "bleed": true,
+                  "items": [
+                    {
+                      "type": "ColumnSet",
+                      "columns": [
+                        {
+                          "type": "Column",
+                          "width": "auto",
+                          "verticalContentAlignment": "Center",
+                          "items": [
+                            {
+                              "type": "TextBlock",
+                              "text": "🛡️",
+                              "size": "ExtraLarge"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "Column",
+                          "width": "stretch",
+                          "verticalContentAlignment": "Center",
+                          "items": [
+                            {
+                              "type": "TextBlock",
+                              "text": "Microsoft Defender インシデントサマリー",
+                              "weight": "Bolder",
+                              "size": "Medium",
+                              "wrap": true
+                            },
+                            {
+                              "type": "TextBlock",
+                              "text": "{{Title}}",
+                              "weight": "Bolder",
+                              "size": "Large",
+                              "wrap": true,
+                              "spacing": "None"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "Container",
+                  "style": "{{SeverityContainerStyle}}",
+                  "bleed": true,
+                  "items": [
+                    {
+                      "type": "ColumnSet",
+                      "columns": [
+                        {
+                          "type": "Column",
+                          "width": "stretch",
+                          "items": [
+                            {
+                              "type": "TextBlock",
+                              "text": "{{SeverityIcon}} 重要度: {{Severity}}",
+                              "weight": "Bolder",
+                              "size": "Medium"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "Column",
+                          "width": "auto",
+                          "items": [
+                            {
+                              "type": "TextBlock",
+                              "text": "ステータス: {{Status}}",
+                              "weight": "Bolder"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "FactSet",
+                  "spacing": "Medium",
+                  "facts": [
+                    { "title": "インシデント ID", "value": "{{IncidentId}}" },
+                    { "title": "作成日時 (JST)", "value": "{{CreatedTime}}" },
+                    { "title": "アラート数", "value": "{{AlertCount}}" },
+                    { "title": "MITRE ATT&CK", "value": "{{MitreTechniques}}" },
+                    { "title": "担当者", "value": "{{AssignedTo}}" }
+                  ]
+                },
+                {
+                  "type": "Container",
+                  "separator": true,
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "📖 インシデントサマリー",
+                      "weight": "Bolder",
+                      "size": "Medium"
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "{{Summary}}",
+                      "wrap": true,
+                      "spacing": "Small"
+                    }
+                  ]
+                },
+                {
+                  "type": "Container",
+                  "separator": true,
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "🚨 主なアラート",
+                      "weight": "Bolder",
+                      "size": "Medium"
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "{{AlertTitles}}",
+                      "wrap": true,
+                      "spacing": "Small"
+                    }
+                  ]
+                },
+                {
+                  "type": "Container",
+                  "separator": true,
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "📌 関連エンティティ",
+                      "weight": "Bolder",
+                      "size": "Medium"
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "{{AffectedEntities}}",
+                      "wrap": true,
+                      "spacing": "Small"
+                    }
+                  ]
+                },
+                {
+                  "type": "Container",
+                  "separator": true,
+                  "isVisible": "{{HasGlobalIPs}}",
+                  "style": "attention",
+                  "items": [
+                    {
+                      "type": "TextBlock",
+                      "text": "🛡️ MDTI 脅威インテリジェンス (グローバル IP)",
+                      "weight": "Bolder",
+                      "size": "Medium"
+                    },
+                    {
+                      "type": "TextBlock",
+                      "text": "{{MdtiIpSummaries}}",
+                      "wrap": true,
+                      "spacing": "Small"
+                    }
+                  ]
+                }
+              ],
+              "actions": [
+                {
+                  "type": "Action.OpenUrl",
+                  "title": "🔗 Microsoft Defender で開く",
+                  "url": "https://security.microsoft.com/incidents/{{IncidentId}}"
+                }
+              ]
+            }
+
+            ==== テンプレート終わり ====
+
+            プレースホルダー変換ルール:
+            - {{SeverityContainerStyle}} → 重要度マッピングのコンテナースタイル文字列
+            - {{SeverityIcon}}           → High=🔴 Medium=🟠 Low=🟢 Informational=🔵
+            - {{CreatedTime}}            → GetIncident の作成日時を **UTC から JST (UTC+9) に変換**し、
+                                           "YYYY-MM-DD HH:MM:SS (JST)" 形式で表記する。なければ "N/A"
+            - {{AlertCount}}             → アラート数。不明の場合は "N/A"
+            - {{MitreTechniques}}        → MITRE テクニックのカンマ区切りリスト。なければ "N/A"
+            - {{AssignedTo}}             → 担当者名。未割り当ての場合は "未割り当て"
+            - {{Summary}}               → IncidentReport の分析サマリーを **日本語** にしたもの。取得失敗時は GetIncident の情報から要約を生成。なければ "情報なし"
+            - {{AlertTitles}}           → アラートタイトルを番号付きリスト（日本語訳）。なければ "情報なし"
+            - {{AffectedEntities}}      → GetIncident の Entities からデバイス・ユーザー・IP の一覧。一行 1 エンティティ。なければ "情報なし"
+            - {{HasGlobalIPs}}          → グローバル IP が 1 件以上あれば true、なければ false
+            - {{MdtiIpSummaries}}       → 各グローバル IP の MDTI 結果。フォーマット:
+                                           "[IP] Verdict: [Verdict] | Score: [Score]\n  [Summary先頭 150 文字]"
+                                           グローバル IP がなければ "該当 IP なし"
+            - すべての文字列値は JSON として有効なようにエスケープすること（改行は \n）
+            - 生成した JSON は必ず閉じ括弧・ブレースが正しいことを確認すること
+            - カードの構築に失敗した場合はエラーを記録し、AdaptiveCardJson に空文字列 "" を使用してステップ 6 を続行すること
+
+            ## ステップ 6: Teams への通知送信（必須・スキップ禁止）
+            **この手順はカード構築の成否に関わらず、必ず実行する。**
+
+            対象インシデントに対して **SendTeamsAdaptiveCard** を呼び出す:
+              - AdaptiveCardJson : ステップ 5 で生成した JSON 文字列。
+                                   カード構築に失敗した場合は空文字列 "" を渡す。
+              - IncidentTitle    : インシデントのタイトル（ログ・件名用）
+
+            **重要: SendTeamsAdaptiveCard の呼び出しを省略・スキップしてはならない。**
+            Logic App 側で AdaptiveCardJson の有効性を検証し、無効・空の場合は Teams 通知をスキップする。
+            エージェント側でカードを送信するか否かを判断してはならない。
+
+            # 出力
+            **SendTeamsAdaptiveCard 呼び出しが完了した後にのみ**、以下の日本語サマリーを返す:
+              - 処理したインシデント ID とタイトル
+              - 重要度とステータス
+              - MDTI で確認したグローバル IP の一覧と判定結果（該当がある場合）
+              - SendTeamsAdaptiveCard の Logic App 応答ステータス
+              - 発生したエラー（あれば）
+              - 起動元: Logic App 連携 / 手動
+        ChildSkills:
+          - GetIncident
+          - IncidentReport
+          - GetSummaryForIndicators
+          - SendTeamsAdaptiveCard
+
+  # ─────────────────────────────────────────────────
+  # Logic App スキル — Teams Adaptive Card 送信
+  # ─────────────────────────────────────────────────
+  - Format: LogicApp
+    Skills:
+      - Name: SendTeamsAdaptiveCard
+        DisplayName: Send Teams Adaptive Card
+        Description: >-
+          インシデントデータを Azure Logic App に送信する。
+          AdaptiveCardJson が有効な JSON 文字列の場合のみ Logic App が Teams に通知を投稿する。
+          AdaptiveCardJson が空または未指定の場合、Logic App は Teams 通知をスキップして正常終了する。
+          このスキルはカード構築の成否に関わらず各インシデントについて必ず呼び出すこと。
+        Inputs:
+          - Name: AdaptiveCardJson
+            Description: >-
+              Teams に投稿する Adaptive Card JSON 文字列。
+              Adaptive Card スキーマ v1.5 に準拠した有効な JSON 文字列を渡す。
+              カード構築に失敗した場合は空文字列 "" を渡す。
+              Logic App 側で空文字列を検出した場合は Teams 通知をスキップする。
+            Required: false
+          - Name: IncidentTitle
+            Description: >-
+              インシデントのタイトル。Logic App 内でのログ記録および
+              Teams メッセージ件名として使用する。
+            Required: true
+        Settings:
+          SubscriptionId: "{{LogicAppSubscriptionId}}"
+          ResourceGroup: "{{LogicAppResourceGroup}}"
+          WorkflowName: "{{LogicAppWorkflowName}}"
+          TriggerName: manual
