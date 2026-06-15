@@ -15,6 +15,10 @@ Defender インシデント番号を受け取り、Security Copilot 組み込み
 | **出力形式** | Teams Adaptive Card (Logic App 経由) |
 | **依存** | Defender ライセンスのみ (Sentinel 不要) |
 
+## Teams 通知例
+<img width="1035" height="1005" alt="image" src="https://github.com/user-attachments/assets/fd14510f-685c-4dfe-b77f-a6dfae13b53b" />
+
+
 ## 機能
 
 ### 1. インシデント詳細の取得
